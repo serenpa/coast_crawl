@@ -1,0 +1,5 @@
+pymongo
+bs4
+urllib3
+certifi
+html5lib
