@@ -215,10 +215,10 @@ def crawl_domain(domain, db):
 
                 all_links, html = get_all_links(url, network_location_part)
 
-                for url in set(all_links):
-                    if not db.url_exists_in_to_crawl(url) and not db.url_exists_in_crawled(url):
-                        print("\t\tadding url to crawl", url)
-                        db.add_url_to_crawl(url)
+                for u in set(all_links):
+                    if not db.url_exists_in_to_crawl(u) and not db.url_exists_in_crawled(u):
+                        print("\t\tadding url to crawl", u)
+                        db.add_url_to_crawl(u)
 
                 url_exists_in_crawled = db.url_exists_in_crawled(url)
                 if not url_exists_in_crawled:
@@ -228,6 +228,8 @@ def crawl_domain(domain, db):
             else:
                 print("Cannot crawl", url, "blocked by robots.txt")
                 db.db.cannot_crawl.insert_one({"url": url, "reason": "blocked by robots.txt"})
+
+            print("Finished crawling url", url)
 
         else:
             flag = False
