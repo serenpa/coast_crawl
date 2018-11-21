@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 
 import certifi
 import urllib3
+import urllib.robotparser
 from bs4 import BeautifulSoup
 from pymongo import MongoClient
 import sys
@@ -108,7 +109,6 @@ def get_all_links(url, seed_domain):
 
     try:
         for link in soup.find_all('a'):
-            # print(link)
             all_urls.append(link.get('href'))
     except Exception as e:
         print(e)
@@ -123,6 +123,76 @@ def get_all_links(url, seed_domain):
 
     return result_urls, html
 
+
+def get_robots_for_url(url):
+    """
+    creates a robotfileparser object (https://docs.python.org/3/library/urllib.robotparser.html#urllib.robotparser.RobotFileParser) based on a url
+    :param url: url to try get robots.txt for
+    :return: urllib.robotparser.RobotFileParser
+    """
+    ROBOTS = "robots.txt"
+    parsed_url = urlparse(url)
+    scheme, netloc = parsed_url[:2]
+    domain_with_robots = "{}://{}/{}".format(scheme, netloc, ROBOTS)
+
+    rp = urllib.robotparser.RobotFileParser()
+
+    print("Checking robots.txt for", domain_with_robots)
+
+    rp.set_url(domain_with_robots)
+    rp.read()
+    return rp
+
+
+def crawl_domain(domain, db):
+    """
+    crawls all the links on a specific domain
+    :param domain: url of domain to be crawled
+    :param db: instantiated db object (see DB class)
+    :return:
+    """
+    network_location_part = urlparse(domain).netloc
+    db.add_url_to_crawl(domain)
+
+    rp = get_robots_for_url(domain)
+
+    flag = True
+
+    while flag:
+        print()
+        print("To crawl: " + str(db.db.to_crawl.count()))
+        print("Crawled: " + str(db.db.crawled_links.count()))
+        print()
+        if db.db.to_crawl.count() != 0:
+            link = db.db.to_crawl.find()[0]
+            url = link['url']
+            db.db.to_crawl.remove({"url": url})
+
+            if rp.can_fetch("*", url):
+
+                print("Crawling", url)
+
+                all_links, html = get_all_links(url, network_location_part)
+
+                for u in all_links:
+                    exists = db.db.to_crawl.find({"url": u})
+                    crawled = db.db.crawled_links.find({"url": u})
+
+                    if exists.count() == 0 and crawled.count() == 0:
+                        db.db.to_crawl.insert_one({"url": u})
+
+                exists = db.db.crawled_links.find({"url": url})
+                if exists.count() == 0:
+                    db.db.crawled_links.insert_one({"url": url})
+                    db.db.pages.insert_one({"url": url, "html": html})
+            else:
+                print("Cannot crawl", url, "blocked by robots.txt")
+                db.db.cannot_crawl.insert_one({"url": url, "reason": "blocked by robots.txt"})
+
+        else:
+            flag = False
+
+    print("Finished Crawling domain", domain)
 
 def crawl(domains, db_url="mongodb://localhost:27017", database="crawler_results_2"):
     """
@@ -146,52 +216,5 @@ def crawl(domains, db_url="mongodb://localhost:27017", database="crawler_results
             domain_to_crawl = pending_domains[0]
             print("crawling..." + domain_to_crawl["status"])
             crawl_domain(domain_to_crawl["domain"], db)
-
-
-def crawl_domain(domain, db):
-    """
-    craws all the links on a specific domain
-    :param domain: url of domain to be crawled
-    :param db: instantiated db object (see DB class)
-    :return:
-    """
-    network_location_part = urlparse(domain).netloc
-    print("domain", domain)
-    db.add_url_to_crawl(domain)
-    while True:
-        flag = True
-
-        while flag:
-            print()
-            print("To crawl: " + str(db.db.to_crawl.count()))
-            print("Crawled: " + str(db.db.crawled_links.count()))
-            print()
-            if db.db.to_crawl.count() != 0:
-                link = db.db.to_crawl.find()[0]
-                url = link['url']
-                print("Crawling", url)
-
-                db.db.to_crawl.remove({"url": url})
-
-                all_links, html = get_all_links(url, network_location_part)
-
-                for u in all_links:
-                    exists = db.db.to_crawl.find({"url": u})
-                    crawled = db.db.crawled_links.find({"url": u})
-
-                    # print(exists.count(), crawled.count())
-
-                    if exists.count() == 0 and crawled.count() == 0:
-                        db.db.to_crawl.insert_one({"url": u})
-
-                exists = db.db.crawled_links.find({"url": url})
-                if exists.count() == 0:
-                    db.db.crawled_links.insert_one({"url": url})
-                    db.db.pages.insert_one({"url": url, "html": html})
-            else:
-                flag = False
-
-        print("Finished Crawling", domain)
-
-
-crawl(["https://www.joelonsoftware.com/archives/"])
+            post = {"domain": domain_to_crawl["domain"], "status": "CRAWLED"}
+            db.db.domains.update_one({"domain": domain_to_crawl["domain"]}, {"$set": post}, upsert=False)
